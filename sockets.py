@@ -3,6 +3,7 @@ import socket
 import threading
 import time
 import pickle
+#instalar a lib pycryptodome
 import Crypto
 from Crypto.PublicKey import RSA
 # from Crypto.Random import get_random_bytes
