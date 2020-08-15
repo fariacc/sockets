@@ -1,107 +1,126 @@
+import sys
 import os
 import socket
 import threading
 import time
 import pickle
-#instalar a lib pycryptodome
 import Crypto
 from Crypto.PublicKey import RSA
-# from Crypto.Random import get_random_bytes
-# from Crypto.Cipher import AES, PKCS1_OAEP
 
 MULTICAST_ADDR = '224.0.0.1'
-ENVIAR_NOTICIA = 1
-MUDAR_REPUTACAO = 2
-NOVO_NO = 3
-RESPOSTA_NOVO_NO = 4
 BIND_ADDR = '0.0.0.0'
 PORT = 3000
-SOCK = socket.socket(socket.AF_INET, socket.SOCK_DGRAM)
+MULTICAST_SOCK = socket.socket(socket.AF_INET, socket.SOCK_DGRAM)
+UNICAST_SOCK = socket.socket(socket.AF_INET, socket.SOCK_DGRAM)
 TIMER = 1
+NEW_NODE = 0
+NEWS = 1
+REPORT = 2
 KEY = RSA.generate(1024)
 PRIVATE_KEY = KEY.export_key()
 PUBLIC_KEY = KEY.publickey().export_key()
+IP_ADDR = socket.gethostbyname(socket.gethostname())
+
 NODES = []
 
-def checkReputation(node):
-    if reputation == 'Confiavel':
-        reputation = 'Nao confiavel'
-        reputation_node = [MUDAR_REPUTACAO, reputation]
-        SOCK.sendto(pickle.dumps(reputation_node), (MULTICAST_ADDR, PORT))
-
 def sendNews():
-    print('Escreva a mensagem: ')
+    print('Noticia: ')
+    # TODO enviar a noticia criptografada
     noticia = input()
-    news_node = [ENVIAR_NOTICIA, noticia]
-    SOCK.sendto(pickle.dumps(news_node), (MULTICAST_ADDR, PORT))
+    MULTICAST_SOCK.sendto(pickle.dumps([NEWS, noticia]), (MULTICAST_ADDR, PORT))
 
-def receiveThread():
-    data_node_sender, address_sender = SOCK.recvfrom(1024)
-    data_node = pickle.loads(data_node_sender)
-    if data_node[0] == NOVO_NO:
-        print("IP do node: ", address_sender[0], ", porta: ", address_sender[1])
-        print("Chave publica do node: ", data_node[1])
-        print("Reputacao do node: ", data_node[2])
-        NODES = [data_node[1], data_node[2], address_sender]
-        your_data = [RESPOSTA_NOVO_NO, PUBLIC_KEY, 'Confiavel']
-        SOCK.sendto(pickle.dumps(your_data), address_sender)
-    elif data_node[0] == RESPOSTA_NOVO_NO:
-        NODES = [data_node[1], data_node[2], address_sender]
-    elif data_node[0] == MUDAR_REPUTACAO:
-        checkReputation()
-    else:
-        print("Noticia: ", data_node[1])
+def reportNode():
+    print("Informe o nome de quem enviou fake news")
+    name_node = input()
 
-    threading.Timer(TIMER, receiveThread).start()
+    MULTICAST_SOCK.sendto(pickle.dumps([REPORT, name_node]), (MULTICAST_ADDR, PORT))
+
+def welcomeNode():
+    welcomeData, address = UNICAST_SOCK.recvfrom(1024)
+    welcome_node = pickle.loads(welcomeData)
+    if welcome_node[0] == NEW_NODE:
+        print("Os nodes da rede dizem 'oi'!")
+        NODES.append({
+            "pub_key": welcome_node[1],
+            "address": welcome_node[2],
+            "name": welcome_node[3],
+            "rep": welcome_node[4]
+        })
+
+    threading.Timer(TIMER, welcomeNode).start()
+
+def receiveNews():
+    data, address = MULTICAST_SOCK.recvfrom(1024)
+    data_node = pickle.loads(data)
+
+    if data_node[0] == NEW_NODE and data_node[1] != PUBLIC_KEY:
+        print('Novo node adicionado a rede!')
+        NODES.append({
+            "pub_key": data_node[1],
+            "address": data_node[2],
+            "name": data_node[3],
+            "rep": data_node[4]
+        })
+        # enviado a chave publica em unicast para quem acabou de chegar
+        UNICAST_SOCK.sendto(pickle.dumps([NEW_NODE, PUBLIC_KEY, UNICAST_SOCK.getsockname(), NAME_PEER, NODES[0]["rep"]]), data_node[2])
+    elif data_node[0] == NEWS:
+        print('Noticia: ', data_node[1])
+        # TODO funcao de assinatura digital
+
+    elif data_node[0] == REPORT:
+        for node in NODES:
+            if node["name"] == data_node[1]:
+                node["rep"] = 0
+                print(NODES)
+                print('Reputacao do node alterada!')
+
+    threading.Timer(TIMER, receiveNews).start()
 
 def main():
-    reputation = 'Confiavel'
-    tipoOperacao = NOVO_NO
+    global NAME_PEER
+    global REPUTATION
+    REPUTATION = 1
+    print("Bem vindo a rede de noticias P2P! \nDigite seu nome: ")
+    NAME_PEER = input()
     membership = socket.inet_aton(MULTICAST_ADDR) + socket.inet_aton(BIND_ADDR)
-    SOCK.setsockopt(socket.IPPROTO_IP, socket.IP_ADD_MEMBERSHIP, membership)
-    SOCK.setsockopt(socket.SOL_SOCKET, socket.SO_REUSEADDR, 1)
-    SOCK.bind((BIND_ADDR, PORT))
+    MULTICAST_SOCK.setsockopt(socket.IPPROTO_IP, socket.IP_ADD_MEMBERSHIP, membership)
+    MULTICAST_SOCK.setsockopt(socket.SOL_SOCKET, socket.SO_REUSEADDR, 1)
+    MULTICAST_SOCK.bind((IP_ADDR, PORT))
+    UNICAST_SOCK.bind((IP_ADDR, 0))
+    MULTICAST_SOCK.sendto(pickle.dumps([NEW_NODE, PUBLIC_KEY, UNICAST_SOCK.getsockname(), NAME_PEER, REPUTATION]), (MULTICAST_ADDR, PORT))
+    UNICAST_SOCK.sendto(pickle.dumps(['']), UNICAST_SOCK.getsockname())
 
-    data_node = [tipoOperacao, PUBLIC_KEY, reputation]
-    SOCK.sendto(pickle.dumps(data_node), (MULTICAST_ADDR, PORT))
+    NODES.append({
+        "pub_key": PUBLIC_KEY,
+        "address": UNICAST_SOCK.getsockname(),
+        "name": NAME_PEER,
+        "rep": REPUTATION
+    })
 
-    receiveThread()
+    print("tipo: ", type(NODES[0]))
 
-    print('Opcoes: \n 1 - Enviar noticia \n 2 - Avisar sobre reputacao de node \n 0 - Sair')
-    tipoOperacao = input()
+    receiveNews()
+    welcomeNode()
 
-    while True:
-        if tipoOperacao == "1":
+    option = -1
+    while option != "0":
+        print("Insira uma das opcoes a seguir:\n0: Sair da rede\n1: Enviar noticias na rede\n2: Reportar um node\n3: Ver nodes na rede")
+        option = input()
+        if option == "0":
+            print("Saindo da rede")
+            MULTICAST_SOCK.close()
+            UNICAST_SOCK.close()
+            os._exit(0)
+        elif option == "1":
             sendNews()
-        elif tipoOperacao == "2":
-            checkReputation()
+        elif option == "2":
+            reportNode()
+        elif option == "3":
+            print("Nodes na rede:")
+            print(NODES)
         else:
-            break
-        print('Opcoes: \n 1 - Enviar noticia \n 2 - Avisar sobre reputacao de node \n 0 - Sair')
-        tipoOperacao = input()
+            print("Insira uma opcao valida!")
     os._exit(0)
 
 if __name__ == '__main__':
     main()
-
-# def sender():
-#     while 1:
-#
-#         print('Escreva a mensagem: ')
-#         mensagem = input().encode("utf-8")
-#         file = open("encrypted_mensagem.bin", "wb")
-#
-#         recipient_key = RSA.import_key(public_key)
-#         session_key = get_random_bytes(16)
-#
-#         cipher_rsa = PKCS1_OAEP.new(recipient_key)
-#         enc_session_key = cipher_rsa.encrypt(session_key)
-#
-#         cipher_aes = AES.new(session_key, AES.MODE_EAX)
-#         ciphertext, tag = cipher_aes.encrypt_and_digest(mensagem)
-#
-#         [ file.write(x) for x in (enc_session_key, cipher_aes.nonce, tag, ciphertext) ]
-#         file.close()
-#
-#         SOCK.sendto(mensagem, (multicast_addr, port))
-#         SOCK.sendto(private_key, (multicast_addr, port))
