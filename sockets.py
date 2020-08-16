@@ -30,11 +30,11 @@ def reportNode():
     MULTICAST_SOCK.sendto(pickle.dumps([REPORT, name_node]), (MULTICAST_ADDR, PORT))
 
 def sendNews(name_peer):
+    news = input('Informe a noticia: ').encode('utf-8')
     for node in NODES:
         if node["name"] == name_peer:
             node_public_key = node["pub_key"]
 
-    news = input('Informe a noticia: ').encode('utf-8')
     private_key = RSA.import_key(open('private-' + str(UNICAST_SOCK.getsockname()[1]) + '.pem', "rb").read())
     h = SHA256.new(news)
     signature = pss.new(private_key).sign(h)
@@ -77,7 +77,7 @@ def welcomeNode():
     welcomeData, address = UNICAST_SOCK.recvfrom(1024) #recebendo as informacoes do node que entrou na rede
     welcome_node = pickle.loads(welcomeData)
     if welcome_node[0] == NEW_NODE: #verifica se a operacao foi a de um novo node entrando na rede
-        print("Os nodes da rede dizem 'oi'") #cada node na rede envia em unicast para o node que entrou
+        print(welcome_node[3] + " mandou 'oi'") #cada node na rede envia em unicast para o node que entrou
         NODES.append({ "pub_key": welcome_node[1], "address": welcome_node[2], "name": welcome_node[3], "rep": welcome_node[4] })
 
     threading.Timer(TIMER, welcomeNode).start()
