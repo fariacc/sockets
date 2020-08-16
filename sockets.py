@@ -20,31 +20,26 @@ SEND_NEWS = 1
 REPORT = 2
 IP_ADDR = socket.gethostbyname(socket.gethostname())
 NODES = []
-
 KEY = RSA.generate(2048)
-
 PRIVATE_KEY = KEY.export_key()
-file_out = open("private.pem", "wb") #gravando a private key em um arquivo
-file_out.write(PRIVATE_KEY)
-file_out.close()
-
 PUBLIC_KEY = KEY.publickey().export_key()
-file_out = open("public.pem", "wb") #gravando a public key em um arquivo
-file_out.write(PUBLIC_KEY)
-file_out.close()
 
 def reportNode():
     name_node = input("Informe o nome de quem enviou fake news: ")
     #envia para todos os nodes na rede a nova reputacao do node reportado
     MULTICAST_SOCK.sendto(pickle.dumps([REPORT, name_node]), (MULTICAST_ADDR, PORT))
 
-def sendNews(node_public_key):
+def sendNews(name_peer):
+    for node in NODES:
+        if node["name"] == name_peer:
+            node_public_key = node["pub_key"]
+
     news = input('Informe a noticia: ').encode('utf-8')
-    private_key = RSA.import_key(open('private.pem').read())
+    private_key = RSA.import_key(open('private-' + str(UNICAST_SOCK.getsockname()[1]) + '.pem', "rb").read())
     h = SHA256.new(news)
     signature = pss.new(private_key).sign(h)
 
-    MULTICAST_SOCK.sendto(pickle.dumps([SEND_NEWS, news, signature, node_public_key]), (MULTICAST_ADDR, PORT))
+    MULTICAST_SOCK.sendto(pickle.dumps([SEND_NEWS, news, signature, node_public_key, name_peer]), (MULTICAST_ADDR, PORT))
 
 def receiveNews():
     data, address = MULTICAST_SOCK.recvfrom(1024)
@@ -52,20 +47,20 @@ def receiveNews():
 
     #checando se operacao é que um novo node chegou na rede e se é o proprio node ou outro node da rede
     if data_node[0] == NEW_NODE and data_node[1] != PUBLIC_KEY:
-        print('Novo node adicionado a rede!\n')
+        print('Novo node adicionado a rede!')
         NODES.append({ "pub_key": data_node[1], "address": data_node[2], "name": data_node[3], "rep": data_node[4] })
         # enviando a chave publica em unicast para quem acabou de chegar
         UNICAST_SOCK.sendto(pickle.dumps([NEW_NODE, PUBLIC_KEY, UNICAST_SOCK.getsockname(), NAME_PEER, NODES[0]["rep"]]), data_node[2])
 
     # checando se a operacao é o envio de uma noticia
     elif data_node[0] == SEND_NEWS:
-        # key = RSA.import_key(PUBLIC_KEY) #pode ser usado para ver se a public key é diferente
-        public_key = RSA.import_key(data_node[3]) #importanto a public key do node que enviou a noticia
+        # public_key_import = RSA.import_key(PUBLIC_KEY) #pode ser usado para ver se a public key é diferente
+        public_key_import = RSA.import_key(data_node[3]) #importanto a public key do node que enviou a noticia
         h = SHA256.new(data_node[1]) #criando uma hash com a noticia enviada
-        verifier = pss.new(public_key)
+        verifier = pss.new(public_key_import)
         try:
             verifier.verify(h, data_node[2]) #verificando a hash e a assinatura
-            print ('Noticia: ', data_node[1].decode('utf-8'))
+            print ('Noticia: ', data_node[1].decode('utf-8'), 'por', data_node[4])
         except (ValueError, TypeError): #caso um node esteja se passando por outro node
             print ('Nao foi possivel confirmar a autenticidade da noticia')
 
@@ -82,7 +77,7 @@ def welcomeNode():
     welcomeData, address = UNICAST_SOCK.recvfrom(1024) #recebendo as informacoes do node que entrou na rede
     welcome_node = pickle.loads(welcomeData)
     if welcome_node[0] == NEW_NODE: #verifica se a operacao foi a de um novo node entrando na rede
-        print("Os nodes da rede dizem 'oi'\n") #cada node na rede envia em unicast para o node que entrou
+        print("Os nodes da rede dizem 'oi'") #cada node na rede envia em unicast para o node que entrou
         NODES.append({ "pub_key": welcome_node[1], "address": welcome_node[2], "name": welcome_node[3], "rep": welcome_node[4] })
 
     threading.Timer(TIMER, welcomeNode).start()
@@ -100,6 +95,14 @@ def main():
     MULTICAST_SOCK.sendto(pickle.dumps([NEW_NODE, PUBLIC_KEY, UNICAST_SOCK.getsockname(), NAME_PEER, REPUTATION]), (MULTICAST_ADDR, PORT))
     UNICAST_SOCK.sendto(pickle.dumps(['']), UNICAST_SOCK.getsockname())
 
+    file_out = open('public-' + str(UNICAST_SOCK.getsockname()[1]) + '.pem', 'wb') #gravando a public key em um arquivo
+    file_out.write(PUBLIC_KEY)
+    file_out.close()
+
+    file_out = open('private-' + str(UNICAST_SOCK.getsockname()[1]) + '.pem', 'wb') #gravando a private key em um arquivo
+    file_out.write(PRIVATE_KEY)
+    file_out.close()
+
     #adicionando a NODES as informacoes do node que entrou na rede agora (si proprio)
     NODES.append({ "pub_key": PUBLIC_KEY, "address": UNICAST_SOCK.getsockname(), "name": NAME_PEER, "rep": REPUTATION })
 
@@ -116,7 +119,7 @@ def main():
             UNICAST_SOCK.close()
             os._exit(0)
         elif option == "1":
-            sendNews(PUBLIC_KEY) #metodo onde é enviado a noticia
+            sendNews(NAME_PEER) #metodo onde é enviado a noticia
         elif option == "2":
             reportNode() #metodo para reportar um node que tenha enviado uma fake news ou que nao seja confiavel
         elif option == "3":
